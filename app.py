@@ -8,7 +8,7 @@ import json
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from typing import List, Dict, Any
-from emotion_detector import search_songs_with_embedding
+from emotion_detector import search_songs_with_embedding, worker
 from psycopg.rows import dict_row
 
 
@@ -530,3 +530,24 @@ async def get_user_playlist(id: int):
             conn.close()
 
     return await asyncio.get_event_loop().run_in_executor(executor, db_operation)
+
+
+@app.get("/api/web-search")
+async def web_search(query: str):
+    """
+    Search for songs on the web and add them to the database
+    """
+    loop = asyncio.get_event_loop()
+
+    def search_operation():
+        try:
+            return worker(query)
+        except Exception as e:
+            print(f"Error in web search: {e}")
+            return None
+
+    await loop.run_in_executor(executor, search_operation)
+
+    # After adding new songs, search in our database
+    songs = await search(query=query, user_id="system", k=5)
+    return songs
