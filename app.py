@@ -478,10 +478,13 @@ async def get_song_by_id(id: int):
                     "song_id": song["id"],
                     "song": song["song"],
                     "artist": song["artist"],
-                    "full_lyric": "",
-                    "dominants": song["dominants"],
-                    "tags": song["tags"],
-                    "genre": song["genre"],
+                    "song_info": song["song_info"],
+                    "tempo": song["tempo"],
+                    "danceability": song["danceability"],
+                    "energy": song["energy"],
+                    "acousticness": song["acousticness"],
+                    "valence": song["valence"],
+                    "release_year": song["release_year"],
                 }
 
                 return song_item
