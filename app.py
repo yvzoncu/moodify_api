@@ -132,10 +132,29 @@ async def get_user_playlist(user_id: str):
             with conn.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT id, user_id, playlist_name, playlist_items, created_at
-                    FROM user_playlist
-                    WHERE user_id = %s
-                    ORDER BY created_at DESC
+                    SELECT 
+                    p.id AS playlist_id,
+                    p.user_id,
+                    p.playlist_name,
+                      (
+                        SELECT json_agg(json_build_object(
+                          'id', s.id,
+                          'song', s.song,
+                          'artist', s.artist,
+                          'genre', s.genre,
+                          'tempo', s.tempo,
+                          'danceability', s.danceability,
+                          'energy', s.energy,
+                          'valence', s.valence,
+                          'acousticness', s.acousticness,
+                          'release_year', s.release_year
+                        ))
+                        FROM jsonb_array_elements(p.playlist_items) AS item
+                        JOIN song_data s ON (item->>'song_id')::INT = s.id
+                      ) AS songs
+                    FROM user_playlist p
+                    WHERE p.user_id = %s
+                    ORDER BY p.created_at DESC;
                     """,
                     (user_id,),
                 )
@@ -144,10 +163,10 @@ async def get_user_playlist(user_id: str):
                 for row in cursor.fetchall():
                     playlists.append(
                         {
-                            "id": row["id"],
+                            "id": row["playlist_id"],
                             "user_id": row["user_id"],
                             "playlist_name": row["playlist_name"],
-                            "playlist_items": row["playlist_items"],
+                            "playlist_items": row["songs"],
                         }
                     )
 
