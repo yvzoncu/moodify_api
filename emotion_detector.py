@@ -157,12 +157,12 @@ def song_suggester(user_prompt):
                     "role": "system",
                     "content": (
                         "You are a music expert assistant. Use reliable sources like Spotify and Popnable "
-                        "to find up to 3 recent, real songs that closely match the user's request."
+                        "to find up to 3 (if not requested otherwise) recent, real songs that closely match the user's request."
                     ),
                 },
                 {
                     "role": "user",
-                    "content": f"Find up to 3 recent songs with title and artist matching: {user_prompt}",
+                    "content": f"Find up to 3 (if not requested otherwise) recent songs with title and artist matching: {user_prompt}",
                 },
             ],
             web_search_options={},
@@ -478,6 +478,7 @@ def search_songs_with_embedding(user_prompt, top_k, threshold=0.7):
                 for song in result:
                     songs.append(
                         {
+                            "song_id": song["id"],
                             "song": song["song"],
                             "artist": song["artist"],
                             "genre": song["genre"],
@@ -555,6 +556,8 @@ def worker(user_prompt):
         song_info = song_attribute_finder(f"{song['song']} by {song['artist']}")
         song_attributes = song_attribute_extractor(song_info)
         insert_song_data(song_attributes[0])
+    total_songs = new_songs + existing_songs
+    return total_songs
 
 
 def add_song_to_db(song_and_artist):

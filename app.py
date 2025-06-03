@@ -56,7 +56,7 @@ def get_db_connection():
 
 
 @app.get("/api/new-song-suggester")
-async def search(query: str, user_id: str, k: int = 5):
+async def search(query: str, user_id: str = "1", k: int = 5):
     loop = asyncio.get_event_loop()
 
     def search_operation():
