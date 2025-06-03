@@ -93,7 +93,7 @@ def get_song_playlist_items_by_id(conn, playlist_id: int):
                 SELECT s.*
                 FROM user_playlist p
                 JOIN LATERAL jsonb_array_elements(p.playlist_items) AS item ON TRUE
-                JOIN songs s ON (item->>'song_id')::INT = s.id
+                JOIN song_data s ON (item->>'song_id')::INT = s.id
                 WHERE p.id = %s
                 """,
                 (playlist_id,),
@@ -105,9 +105,13 @@ def get_song_playlist_items_by_id(conn, playlist_id: int):
                         "song_id": song["id"],
                         "song": song["song"],
                         "artist": song["artist"],
-                        "full_lyric": "",
-                        "dominants": song["dominants"],
-                        "tags": song["tags"],
+                        "song_info": song["song_info"],
+                        "tempo": song["tempo"],
+                        "danceability": song["danceability"],
+                        "energy": song["energy"],
+                        "acousticness": song["acousticness"],
+                        "valence": song["valence"],
+                        "release_year": song["release_year"],
                         "genre": song["genre"],
                     }
                 )
