@@ -10,6 +10,8 @@ from pydantic import BaseModel
 from typing import List, Dict, Any
 from emotion_detector import search_songs_with_embedding, worker
 from psycopg.rows import dict_row
+from spotipy import Spotify
+from spotipy.oauth2 import SpotifyClientCredentials
 
 
 class PlaylistItem(BaseModel):
@@ -113,6 +115,8 @@ def get_song_playlist_items_by_id(conn, playlist_id: int):
                         "valence": song["valence"],
                         "release_year": song["release_year"],
                         "genre": song["genre"],
+                        "album_image": song["album_image"],
+                        "spotify_id": song["spotify_id"],
                     }
                 )
     except Exception as e:
@@ -147,7 +151,9 @@ async def get_user_playlist(user_id: str):
                           'energy', s.energy,
                           'valence', s.valence,
                           'acousticness', s.acousticness,
-                          'release_year', s.release_year
+                          'release_year', s.release_year,
+                          'album_image', s.album_image,
+                          'spotify_id', s.spotify_id
                         ))
                         FROM jsonb_array_elements(p.playlist_items) AS item
                         JOIN song_data s ON (item->>'song_id')::INT = s.id
@@ -577,3 +583,78 @@ async def web_search(query: str):
     # After adding new songs, search in our database
     songs = await search(query=query, user_id="system", k=5)
     return songs
+
+
+@app.patch("/api/update-song-spotify-info")
+async def update_song_spotify_info(id: int):
+    """
+    Update spotify_id and album_image for a song in song_data by id using Spotify API.
+    If both values are already set, return them immediately.
+    Always return only spotify_id and album_image in the response.
+    """
+
+    def db_operation():
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cursor:
+                # 1. Fetch song, artist, spotify_id, album_image
+                cursor.execute(
+                    "SELECT id, song, artist, spotify_id, album_image FROM song_data WHERE id = %s",
+                    (id,),
+                )
+                row = cursor.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Song not found.")
+                song, artist = row["song"], row["artist"]
+                spotify_id, album_image = row["spotify_id"], row["album_image"]
+
+                # 2. If both are set, return immediately
+                if spotify_id and album_image:
+                    return {"spotify_id": spotify_id, "album_image": album_image}
+
+                # 3. Setup Spotify client
+                client_id = os.getenv("SPOTIFY_CLIENT_ID")
+                client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
+                if not client_id or not client_secret:
+                    raise HTTPException(
+                        status_code=500, detail="Spotify credentials not set in .env"
+                    )
+                sp = Spotify(
+                    auth_manager=SpotifyClientCredentials(client_id, client_secret)
+                )
+
+                # 4. Search Spotify
+                query = f"track:{song} artist:{artist}"
+                results = sp.search(q=query, type="track", limit=1)
+                items = results.get("tracks", {}).get("items", [])
+                if not items:
+                    raise HTTPException(
+                        status_code=404, detail="No Spotify match found."
+                    )
+                track = items[0]
+                new_spotify_id = track["id"]
+                images = track["album"]["images"]
+                new_album_image = (
+                    images[-1]["url"] if images else None
+                )  # Smallest image
+
+                # 5. Update DB
+                cursor.execute(
+                    "UPDATE song_data SET spotify_id = %s, album_image = %s WHERE id = %s RETURNING spotify_id, album_image",
+                    (new_spotify_id, new_album_image, id),
+                )
+                updated = cursor.fetchone()
+                conn.commit()
+                return {
+                    "spotify_id": updated["spotify_id"],
+                    "album_image": updated["album_image"],
+                }
+        except HTTPException:
+            raise
+        except Exception as e:
+            conn.rollback()
+            raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        finally:
+            conn.close()
+
+    return await asyncio.get_event_loop().run_in_executor(executor, db_operation)
