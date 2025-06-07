@@ -12,6 +12,8 @@ from emotion_detector import search_songs_with_embedding, worker
 from psycopg.rows import dict_row
 from spotipy import Spotify
 from spotipy.oauth2 import SpotifyClientCredentials
+from uuid import uuid4
+from datetime import datetime, UTC
 
 
 class PlaylistItem(BaseModel):
@@ -22,6 +24,11 @@ class CreatePlaylistRequest(BaseModel):
     user_id: str
     playlist_name: str
     playlist_items: List[PlaylistItem]
+
+
+class SharePlaylistRequest(BaseModel):
+    playlist_id: int
+    user_id: str
 
 
 load_dotenv()
@@ -657,4 +664,37 @@ async def update_song_spotify_info(id: int):
         finally:
             conn.close()
 
+    return await asyncio.get_event_loop().run_in_executor(executor, db_operation)
+
+
+@app.post("/api/share-playlist")
+async def share_playlist(request: SharePlaylistRequest):
+    """
+    Generate a share token for a playlist and return the shareable URL.
+    """
+    def db_operation():
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cursor:
+                # Generate unique token
+                share_token = str(uuid4())
+                created_at = datetime.now(UTC)
+                # Store in DB
+                cursor.execute(
+                    """
+                    INSERT INTO share_playlist (share_token, playlist_id, owner_user_id, created_at)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING share_token
+                    """,
+                    (share_token, request.playlist_id, request.user_id, created_at),
+                )
+                conn.commit()
+                # Construct shareable URL (adjust domain as needed)
+                share_url = f"http://192.168.10.150:3000/share/{share_token}"
+                return {"share_token": share_token, "share_url": share_url}
+        except Exception as e:
+            conn.rollback()
+            raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        finally:
+            conn.close()
     return await asyncio.get_event_loop().run_in_executor(executor, db_operation)
