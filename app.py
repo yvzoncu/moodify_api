@@ -29,6 +29,7 @@ class CreatePlaylistRequest(BaseModel):
 class SharePlaylistRequest(BaseModel):
     playlist_id: int
     user_id: str
+    user_name: str
 
 
 load_dotenv()
@@ -693,17 +694,67 @@ async def share_playlist(request: SharePlaylistRequest):
                 created_at = datetime.now(UTC)
                 cursor.execute(
                     """
-                    INSERT INTO share_playlist (share_token, playlist_id, owner_user_id, created_at)
+                    INSERT INTO share_playlist (share_token, playlist_id, owner_user_id, user_name created_at)
                     VALUES (%s, %s, %s, %s)
                     RETURNING share_token
                     """,
-                    (share_token, request.playlist_id, request.user_id, created_at),
+                    (share_token, request.playlist_id, request.user_id, request.user_name, created_at),
                 )
                 conn.commit()
                 share_url = f"http://192.168.10.150:3000/share/{share_token}"
                 return {"share_token": share_token, "share_url": share_url}
         except Exception as e:
             conn.rollback()
+            raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        finally:
+            conn.close()
+    return await asyncio.get_event_loop().run_in_executor(executor, db_operation)
+
+
+@app.get("/api/get-shared-playlist")
+async def get_shared_playlist(share_token: str):
+    """
+    Get shared playlist details by share token (UUID).
+    """
+    def db_operation():
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT playlist_id, owner_user_id FROM share_playlist WHERE share_token = %s
+                    """,
+                    (share_token,),
+                )
+                row = cursor.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Share token not found")
+                playlist_id = row["playlist_id"]
+                owner_user_id = row["owner_user_id"]
+                # Fetch playlist details
+                cursor.execute(
+                    """
+                    SELECT id, user_id, playlist_name, playlist_items, user_name
+                    FROM user_playlist
+                    WHERE id = %s
+                    """,
+                    (playlist_id,),
+                )
+                playlist = cursor.fetchone()
+                if not playlist:
+                    raise HTTPException(status_code=404, detail="Playlist not found")
+                items = get_song_playlist_items_by_id(conn, playlist_id)
+                return {
+                    "playlist": {
+                        "id": playlist["id"],
+                        "user_id": playlist["user_id"],
+                        "playlist_name": playlist["playlist_name"],
+                        "user_name": playlist["user_name"],
+                    },
+                    "items": items,
+                    "owner_user_id": owner_user_id,
+                }
+        except Exception as e:
             raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
         finally:
             conn.close()
