@@ -676,10 +676,21 @@ async def share_playlist(request: SharePlaylistRequest):
         conn = get_db_connection()
         try:
             with conn.cursor() as cursor:
-                # Generate unique token
+                # Check if a share token already exists for this playlist and user
+                cursor.execute(
+                    """
+                    SELECT share_token FROM share_playlist WHERE playlist_id = %s AND owner_user_id = %s
+                    """,
+                    (request.playlist_id, request.user_id),
+                )
+                row = cursor.fetchone()
+                if row:
+                    share_token = row["share_token"]
+                    share_url = f"http://192.168.10.150:3000/share/{share_token}"
+                    return {"share_token": share_token, "share_url": share_url}
+                # Generate unique token and create new record
                 share_token = str(uuid4())
                 created_at = datetime.now(UTC)
-                # Store in DB
                 cursor.execute(
                     """
                     INSERT INTO share_playlist (share_token, playlist_id, owner_user_id, created_at)
@@ -689,7 +700,6 @@ async def share_playlist(request: SharePlaylistRequest):
                     (share_token, request.playlist_id, request.user_id, created_at),
                 )
                 conn.commit()
-                # Construct shareable URL (adjust domain as needed)
                 share_url = f"http://192.168.10.150:3000/share/{share_token}"
                 return {"share_token": share_token, "share_url": share_url}
         except Exception as e:
