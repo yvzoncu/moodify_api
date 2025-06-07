@@ -722,7 +722,7 @@ async def get_shared_playlist(share_token: str):
             with conn.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT playlist_id, owner_user_id FROM share_playlist WHERE share_token = %s
+                    SELECT playlist_id, owner_user_id, user_name FROM share_playlist WHERE share_token = %s
                     """,
                     (share_token,),
                 )
@@ -730,11 +730,11 @@ async def get_shared_playlist(share_token: str):
                 if not row:
                     raise HTTPException(status_code=404, detail="Share token not found")
                 playlist_id = row["playlist_id"]
-                owner_user_id = row["owner_user_id"]
+                user_name = row["user_name"]
                 # Fetch playlist details
                 cursor.execute(
                     """
-                    SELECT id, user_id, playlist_name, playlist_items, user_name
+                    SELECT id, user_id, playlist_name, playlist_items
                     FROM user_playlist
                     WHERE id = %s
                     """,
@@ -749,10 +749,11 @@ async def get_shared_playlist(share_token: str):
                         "id": playlist["id"],
                         "user_id": playlist["user_id"],
                         "playlist_name": playlist["playlist_name"],
-                        "user_name": playlist["user_name"],
+                        "user_name": user_name,
                     },
                     "items": items,
-                    "owner_user_id": owner_user_id,
+                    
+                   
                 }
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
