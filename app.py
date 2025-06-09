@@ -30,6 +30,7 @@ class SharePlaylistRequest(BaseModel):
     playlist_id: int
     user_id: str
     user_name: str
+    owner_notes: str
 
 
 load_dotenv()
@@ -688,21 +689,21 @@ async def share_playlist(request: SharePlaylistRequest):
                 if row:
                     share_token = row["share_token"]
                     share_url = f"http://192.168.10.150:3000/share/{share_token}"
-                    return {"share_token": share_token, "share_url": share_url, "user_name": request.user_name}
+                    return {"share_token": share_token, "share_url": share_url, "user_name": request.user_name, "owner_notes": request.owner_notes}
                 # Generate unique token and create new record
                 share_token = str(uuid4())
                 created_at = datetime.now(UTC)
                 cursor.execute(
                     """
-                    INSERT INTO share_playlist (share_token, playlist_id, owner_user_id, user_name, created_at)
-                    VALUES (%s, %s, %s, %s, %s)
+                    INSERT INTO share_playlist (share_token, playlist_id, owner_user_id, user_name, owner_notes, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     RETURNING share_token
                     """,
-                    (share_token, request.playlist_id, request.user_id, request.user_name, created_at),
+                    (share_token, request.playlist_id, request.user_id, request.user_name, request.owner_notes, created_at),
                 )
                 conn.commit()
                 share_url = f"http://192.168.10.150:3000/share/{share_token}"
-                return {"share_token": share_token, "share_url": share_url, "user_name": request.user_name}
+                return {"share_token": share_token, "share_url": share_url, "user_name": request.user_name, "owner_notes": request.owner_notes}
         except Exception as e:
             conn.rollback()
             raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
@@ -722,7 +723,7 @@ async def get_shared_playlist(share_token: str):
             with conn.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT playlist_id, owner_user_id, user_name FROM share_playlist WHERE share_token = %s
+                    SELECT playlist_id, owner_user_id, user_name, owner_notes FROM share_playlist WHERE share_token = %s
                     """,
                     (share_token,),
                 )
@@ -731,6 +732,7 @@ async def get_shared_playlist(share_token: str):
                     raise HTTPException(status_code=404, detail="Share token not found")
                 playlist_id = row["playlist_id"]
                 user_name = row["user_name"]
+                owner_notes = row["owner_notes"]
                 # Fetch playlist details
                 cursor.execute(
                     """
@@ -750,6 +752,7 @@ async def get_shared_playlist(share_token: str):
                         "user_id": playlist["user_id"],
                         "playlist_name": playlist["playlist_name"],
                         "user_name": user_name,
+                        "owner_notes": owner_notes,
                     },
                     "items": items,
                     
