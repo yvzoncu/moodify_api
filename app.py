@@ -14,6 +14,7 @@ from spotipy import Spotify
 from spotipy.oauth2 import SpotifyClientCredentials
 from uuid import uuid4
 from datetime import datetime, UTC
+from openai import OpenAI
 
 
 class PlaylistItem(BaseModel):
@@ -67,14 +68,25 @@ def get_db_connection():
 
 
 @app.get("/api/new-song-suggester")
-async def search(query: str, user_id: str = "1", k: int = 5):
+async def search(query: str, user_id: str = "1", search_type: str = "db", k: int = 5):
     loop = asyncio.get_event_loop()
+    
+    if search_type == "db":
+        def db_search_operation():
+            return search_songs_with_embedding(query, top_k=k)
+        songs = await loop.run_in_executor(None, db_search_operation)
+        return {"results": songs if songs else []}
+    else:
+        def web_search_operation():
+            try:
+                return worker(query)
+            except Exception as e:
+                print(f"Error in web search: {e}")
+                return None
 
-    def search_operation():
-        return search_songs_with_embedding(query, top_k=k)
-
-    songs = await loop.run_in_executor(None, search_operation)
-    return {"results": songs if songs else []}
+        songs= await loop.run_in_executor(None, web_search_operation) 
+        return {"results": songs if songs else []}
+        
 
 
 def insert_user_query(user_id, query):
@@ -113,19 +125,24 @@ def get_song_playlist_items_by_id(conn, playlist_id: int):
             for song in songs:
                 result.append(
                     {
-                        "song_id": song["id"],
+                        "id": song["id"],
                         "song": song["song"],
                         "artist": song["artist"],
                         "song_info": song["song_info"],
+                        "genre": song["genre"],
                         "tempo": song["tempo"],
                         "danceability": song["danceability"],
                         "energy": song["energy"],
                         "acousticness": song["acousticness"],
                         "valence": song["valence"],
                         "release_year": song["release_year"],
-                        "genre": song["genre"],
+                        
                         "album_image": song["album_image"],
                         "spotify_id": song["spotify_id"],
+                        "music_key": song["music_key"],
+                        "camelot_value": song["camelot_value"],
+                        "album": song["album"],
+                        "tempo_and_key_analysis": song["tempo_and_key_analysis"],
                     }
                 )
     except Exception as e:
@@ -149,6 +166,8 @@ async def get_user_playlist(user_id: str):
                     p.id AS playlist_id,
                     p.user_id,
                     p.playlist_name,
+                    p.identifier,
+                    p.playlist_analysis,
                       (
                         SELECT json_agg(json_build_object(
                           'id', s.id,
@@ -182,6 +201,8 @@ async def get_user_playlist(user_id: str):
                             "user_id": row["user_id"],
                             "playlist_name": row["playlist_name"],
                             "playlist_items": row["songs"],
+                            "identifier": row["identifier"],
+                            "playlist_analysis": row["playlist_analysis"],
                         }
                     )
 
@@ -245,6 +266,8 @@ async def delete_user_playlist(user_id: str, playlist_id: int):
                             "user_id": row["user_id"],
                             "playlist_name": row["playlist_name"],
                             "playlist_items": row["playlist_items"],
+                            "identifier": row["identifier"],
+                            "playlist_analysis": row["playlist_analysis"],
                         }
                     )
 
@@ -305,7 +328,7 @@ async def create_user_playlist(request: CreatePlaylistRequest):
 
                 cursor.execute(
                     """
-                    SELECT id, user_id, playlist_name, playlist_items, created_at
+                    SELECT id, user_id, playlist_name, playlist_items, identifier, playlist_analysis
                     FROM user_playlist
                     WHERE user_id = %s
                     ORDER BY created_at DESC
@@ -321,6 +344,8 @@ async def create_user_playlist(request: CreatePlaylistRequest):
                             "user_id": row["user_id"],
                             "playlist_name": row["playlist_name"],
                             "playlist_items": row["playlist_items"],
+                            "identifier": row["identifier"],
+                            "playlist_analysis": row["playlist_analysis"],
                         }
                     )
 
@@ -456,7 +481,7 @@ async def get_song_playlist_by_id(id: int):
             with conn.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT id, user_id, playlist_name, playlist_items
+                    SELECT id, user_id, playlist_name, playlist_items, identifier, playlist_analysis
                     FROM user_playlist
                     WHERE id = %s
                     """,
@@ -472,6 +497,8 @@ async def get_song_playlist_by_id(id: int):
                     "user_id": playlist["user_id"],
                     "playlist_name": playlist["playlist_name"],
                     "playlist_items": playlist["playlist_items"],
+                    "identifier": playlist["identifier"],
+                    "playlist_analysis": playlist["playlist_analysis"],
                 }
 
                 items = get_song_playlist_items_by_id(conn, playlist["id"])
@@ -485,50 +512,7 @@ async def get_song_playlist_by_id(id: int):
     return await asyncio.get_event_loop().run_in_executor(executor, db_operation)
 
 
-@app.get("/api/get-song-by-id")
-async def get_song_by_id(id: int):
-    """
-    Get song by id
-    """
 
-    def db_operation():
-        conn = get_db_connection()
-        try:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT id, song, artist, full_lyric, dominants, tags, genre
-                    FROM songs
-                    WHERE id = %s
-                    """,
-                    (id,),
-                )
-
-                song = cursor.fetchone()
-                if not song:
-                    raise HTTPException(status_code=404, detail="Song not found")
-
-                song_item = {
-                    "song_id": song["id"],
-                    "song": song["song"],
-                    "artist": song["artist"],
-                    "song_info": song["song_info"],
-                    "tempo": song["tempo"],
-                    "danceability": song["danceability"],
-                    "energy": song["energy"],
-                    "acousticness": song["acousticness"],
-                    "valence": song["valence"],
-                    "release_year": song["release_year"],
-                }
-
-                return song_item
-
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-        finally:
-            conn.close()
-
-    return await asyncio.get_event_loop().run_in_executor(executor, db_operation)
 
 
 @app.get("/api/get-playlist-by-playlist-id")
@@ -543,7 +527,7 @@ async def get_playlist_by_id(id: int):
             with conn.cursor() as cursor:
                 cursor.execute(
                     """
-                    SELECT id, user_id, playlist_name, playlist_items
+                    SELECT id, user_id, playlist_name, playlist_items, identifier, playlist_analysis
                     FROM user_playlist
                     WHERE id = %s
                     ORDER BY created_at DESC
@@ -560,6 +544,8 @@ async def get_playlist_by_id(id: int):
                     "user_id": playlist["user_id"],
                     "playlist_name": playlist["playlist_name"],
                     "playlist_items": playlist["playlist_items"],
+                    "identifier": playlist["identifier"],
+                    "playlist_analysis": playlist["playlist_analysis"],
                 }
 
                 items = get_song_playlist_items_by_id(conn, playlist["id"])
@@ -678,18 +664,6 @@ async def share_playlist(request: SharePlaylistRequest):
         conn = get_db_connection()
         try:
             with conn.cursor() as cursor:
-                # Check if a share token already exists for this playlist and user
-                cursor.execute(
-                    """
-                    SELECT share_token FROM share_playlist WHERE playlist_id = %s AND owner_user_id = %s
-                    """,
-                    (request.playlist_id, request.user_id),
-                )
-                row = cursor.fetchone()
-                if row:
-                    share_token = row["share_token"]
-                    share_url = f"http://192.168.10.150:3000/share/{share_token}"
-                    return {"share_token": share_token, "share_url": share_url, "user_name": request.user_name, "owner_notes": request.owner_notes}
                 # Generate unique token and create new record
                 share_token = str(uuid4())
                 created_at = datetime.now(UTC)
@@ -736,7 +710,7 @@ async def get_shared_playlist(share_token: str):
                 # Fetch playlist details
                 cursor.execute(
                     """
-                    SELECT id, user_id, playlist_name, playlist_items
+                    SELECT id, user_id, playlist_name, playlist_items, identifier, playlist_analysis
                     FROM user_playlist
                     WHERE id = %s
                     """,
@@ -763,3 +737,100 @@ async def get_shared_playlist(share_token: str):
         finally:
             conn.close()
     return await asyncio.get_event_loop().run_in_executor(executor, db_operation)
+
+
+@app.get("/api/playlist-analysis")
+async def playlist_analysis(playlist_id: int):
+    """
+    Analyze the emotional and musical context of a playlist using OpenAI.
+    """
+    def db_operation():
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cursor:
+                # Fetch playlist
+                cursor.execute(
+                    """
+                    SELECT id, user_id, playlist_name, playlist_items
+                    FROM user_playlist
+                    WHERE id = %s
+                    """,
+                    (playlist_id,),
+                )
+                playlist = cursor.fetchone()
+                if not playlist:
+                    raise HTTPException(status_code=404, detail="Playlist not found")
+                # Fetch songs in playlist
+                song_ids = [item["song_id"] for item in playlist["playlist_items"]]
+                if not song_ids:
+                    raise HTTPException(status_code=404, detail="No songs in playlist")
+                format_strings = ','.join(['%s'] * len(song_ids))
+                cursor.execute(
+                    f"""
+                    SELECT song, artist, song_info, tempo_and_key_analysis
+                    FROM song_data
+                    WHERE id IN ({format_strings})
+                    """,
+                    tuple(song_ids),
+                )
+                songs = cursor.fetchall()
+                return playlist, songs
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        finally:
+            conn.close()
+
+    playlist, songs = await asyncio.get_event_loop().run_in_executor(executor, db_operation)
+
+    # Prepare prompt for OpenAI
+    song_descriptions = []
+    for s in songs:
+        desc = f"- '{s['song']}' by {s['artist']}: {s.get('song_info', '')} {s.get('tempo_and_key_analysis', '')}"
+        song_descriptions.append(desc)
+    prompt = (
+        "You are a music psychologist. Given the following playlist and its song values, write an emotional analysis of the user who created it. "
+        "Write on behalf of the user, expressing their emotional and musical journey through these songs. "
+        "Be insightful and empathetic, and use the song values to infer the user's feelings, moods, and intentions. "
+        "Limit your response to a maximum of 200 words.\n\n"
+        "Playlist:\n" + '\n'.join(song_descriptions)
+    )
+
+    # Call OpenAI
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a music psychologist and playlist analyst."},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=400,
+            temperature=0.7,
+        )
+        analysis = response.choices[0].message.content
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"OpenAI API error: {str(e)}")
+
+    # Update user_playlist with identifier and playlist_analysis
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "UPDATE user_playlist SET identifier = %s, playlist_analysis = %s WHERE id = %s",
+                (len(songs), analysis, playlist["id"])
+            )
+            conn.commit()
+    finally:
+        conn.close()
+
+    return {
+        "playlist_id": playlist["id"],
+        "playlist_name": playlist["playlist_name"],
+        "user_id": playlist["user_id"],
+        "identifier": len(songs),
+        "analysis": analysis,
+        
+       
+    }
+
