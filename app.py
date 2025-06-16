@@ -402,6 +402,8 @@ async def update_user_playlist(playlist_id: int, song_id: int, action: str = "ad
                             "id": playlist["id"],
                             "user_id": playlist["user_id"],
                             "playlist_name": playlist["playlist_name"],
+                            "identifier": playlist["identifier"],
+                            "playlist_analysis": playlist["playlist_analysis"],
                             "playlist_items": playlist_items,
                         }
 
