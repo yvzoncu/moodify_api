@@ -951,9 +951,39 @@ Format your response clearly with these three sections."""
             temperature=0.7,
         )
         dj_analysis = response.choices[0].message.content
+        prompt_tokens = response.usage.prompt_tokens
+        completion_tokens = response.usage.completion_tokens
+        total_tokens = response.usage.total_tokens
+        
+        
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"OpenAI API error: {str(e)}")
+    
+    def save_ordered_playlist():
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cursor:
+                from datetime import datetime, UTC
+                cursor.execute(
+                    """
+                    INSERT INTO order_playlist (user_id, playlist_items, ai_analysis, created_at, prompt_tokens, completion_tokens, total_tokens)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        playlist["user_id"],
+                        json.dumps(playlist["playlist_items"]),
+                        dj_analysis,
+                        datetime.now(UTC),
+                        prompt_tokens,
+                        completion_tokens,
+                        total_tokens
+                    ),
+                )
+                conn.commit()
+        finally:
+            conn.close()
+    await asyncio.get_event_loop().run_in_executor(executor, save_ordered_playlist)
 
     return {
         "playlist_id": playlist["id"],
