@@ -34,6 +34,13 @@ class SharePlaylistRequest(BaseModel):
     owner_notes: str
 
 
+class ReorderPlaylistRequest(BaseModel):
+    playlist_id: int
+    song_id: int
+    old_index: int
+    new_index: int
+
+
 load_dotenv()
 
 app = FastAPI()
@@ -835,4 +842,210 @@ async def playlist_analysis(playlist_id: int):
         
        
     }
+    
+    
+
+
+@app.get("/api/dj-playlist-order")
+async def dj_playlist_order(playlist_id: int):
+    """
+    Reorder playlist songs based on DJ mixing principles using Camelot keys, BPM, and tempo analysis.
+    AI acts as a professional DJ to create smooth transitions between tracks.
+    """
+    def db_operation():
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cursor:
+                # Fetch playlist
+                cursor.execute(
+                    """
+                    SELECT id, user_id, playlist_name, playlist_items
+                    FROM user_playlist
+                    WHERE id = %s
+                    """,
+                    (playlist_id,),
+                )
+                playlist = cursor.fetchone()
+                if not playlist:
+                    raise HTTPException(status_code=404, detail="Playlist not found")
+                
+                # Fetch songs in playlist with DJ-relevant data
+                song_ids = [item["song_id"] for item in playlist["playlist_items"]]
+                if not song_ids:
+                    raise HTTPException(status_code=404, detail="No songs in playlist")
+                
+                format_strings = ','.join(['%s'] * len(song_ids))
+                cursor.execute(
+                    f"""
+                    SELECT id, song, artist, tempo, music_key, camelot_value, energy, valence, danceability
+                    FROM song_data
+                    WHERE id IN ({format_strings})
+                    """,
+                    tuple(song_ids),
+                )
+                songs = cursor.fetchall()
+                return playlist, songs
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        finally:
+            conn.close()
+
+    playlist, songs = await asyncio.get_event_loop().run_in_executor(executor, db_operation)
+
+    # Prepare detailed song data for DJ analysis
+    song_data = []
+    for i, song in enumerate(songs):
+        song_info = {
+            "index": i + 1,
+            "id": song["id"],
+            "song": song["song"],
+            "artist": song["artist"],
+            "tempo": song.get("tempo", "Unknown"),
+            "music_key": song.get("music_key", "Unknown"),
+            "camelot_value": song.get("camelot_value", "Unknown"),
+            "energy": song.get("energy", "Unknown"),
+            "valence": song.get("valence", "Unknown"),
+            "danceability": song.get("danceability", "Unknown")
+        }
+        song_data.append(song_info)
+
+    # Create detailed prompt for AI DJ
+    song_descriptions = []
+    for s in song_data:
+        desc = (f"{s['index']}. '{s['song']}' by {s['artist']} - "
+                f"BPM: {s['tempo']}, Key: {s['music_key']}, Camelot: {s['camelot_value']}, "
+                f"Energy: {s['energy']}, Valence: {s['valence']}, Danceability: {s['danceability']}")
+        song_descriptions.append(desc)
+
+    prompt = f"""You are a professional DJ with expertise in harmonic mixing and crowd energy management. 
+
+Analyze this playlist and reorder the songs to create the best possible DJ set flow:
+
+PLAYLIST: "{playlist['playlist_name']}"
+SONGS:
+{chr(10).join(song_descriptions)}
+
+INSTRUCTIONS:
+1. Use Camelot Wheel theory for harmonic mixing (compatible keys are +1, -1, or same number with opposite letter)
+2. Consider BPM transitions (gradual changes work best, avoid sudden jumps >10 BPM unless intentional)
+3. Build energy progression (consider energy, valence, danceability values)
+4. Identify any songs that don't fit well with the others
+
+RESPOND WITH:
+1. **REORDERED PLAYLIST**: List the song numbers in your recommended order with brief transition notes
+2. **DJ NOTES**: Explain your mixing strategy and energy flow
+3. **PROBLEMATIC TRACKS**: Mention any songs that are difficult to mix or don't fit the overall vibe
+
+Format your response clearly with these three sections."""
+
+    # Call OpenAI
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a professional DJ and music mixing expert specializing in harmonic mixing using the Camelot Wheel system."},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=800,
+            temperature=0.7,
+        )
+        dj_analysis = response.choices[0].message.content
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"OpenAI API error: {str(e)}")
+
+    return {
+        "playlist_id": playlist["id"],
+        "playlist_name": playlist["playlist_name"],
+        "original_songs": song_data,
+        "dj_analysis": dj_analysis,
+        "total_tracks": len(songs)
+    }
+    
+    
+
+
+@app.post("/api/reorder-playlist-items")
+async def reorder_playlist_items(request: ReorderPlaylistRequest):
+    """
+    Reorder songs in a playlist by moving a song from old_index to new_index
+    """
+    def db_operation():
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cursor:
+                # Get current playlist
+                cursor.execute(
+                    """
+                    SELECT id, user_id, playlist_name, playlist_items
+                    FROM user_playlist
+                    WHERE id = %s
+                    """,
+                    (request.playlist_id,),
+                )
+                playlist = cursor.fetchone()
+                if not playlist:
+                    raise HTTPException(status_code=404, detail="Playlist not found")
+
+                playlist_items = playlist["playlist_items"]
+                
+                # Validate indices
+                if request.old_index < 0 or request.old_index >= len(playlist_items):
+                    raise HTTPException(status_code=400, detail="Invalid old_index")
+                if request.new_index < 0 or request.new_index >= len(playlist_items):
+                    raise HTTPException(status_code=400, detail="Invalid new_index")
+                
+                # Validate that the song at old_index matches the provided song_id
+                if playlist_items[request.old_index].get("song_id") != request.song_id:
+                    raise HTTPException(status_code=400, detail="Song ID doesn't match the song at old_index")
+                
+                # Reorder the playlist items
+                # Remove item from old position
+                item_to_move = playlist_items.pop(request.old_index)
+                # Insert item at new position
+                playlist_items.insert(request.new_index, item_to_move)
+                
+                # Update the playlist in database
+                cursor.execute(
+                    """
+                    UPDATE user_playlist 
+                    SET playlist_items = %s::jsonb 
+                    WHERE id = %s
+                    RETURNING id, user_id, playlist_name, playlist_items, identifier, playlist_analysis
+                    """,
+                    (json.dumps(playlist_items), request.playlist_id),
+                )
+                updated_playlist = cursor.fetchone()
+                conn.commit()
+                
+                # Get the updated song items for response
+                items = get_song_playlist_items_by_id(conn, request.playlist_id)
+                
+                return {
+                    "message": "Playlist reordered successfully",
+                    "playlist": {
+                        "id": updated_playlist["id"],
+                        "user_id": updated_playlist["user_id"],
+                        "playlist_name": updated_playlist["playlist_name"],
+                        "playlist_items": updated_playlist["playlist_items"],
+                        "identifier": updated_playlist["identifier"],
+                        "playlist_analysis": updated_playlist["playlist_analysis"],
+                    },
+                    "items": items
+                }
+                
+        except HTTPException as e:
+            raise e
+        except Exception as e:
+            conn.rollback()
+            raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        finally:
+            conn.close()
+
+    return await asyncio.get_event_loop().run_in_executor(executor, db_operation)
+
+
+
+
 
