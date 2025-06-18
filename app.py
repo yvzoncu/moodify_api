@@ -938,7 +938,7 @@ Format: "Remove: <song_number>. <song_name> - Reason for removal"
 
 2. **REORDERED PLAYLIST**:
 List ONLY the remaining songs (excluding problematic ones) in your recommended order.
-Format each line as: "<song_name> : from <old_position> to <new_position> Reason for reordering very briefly"
+Format each line as: "<song_name>; Position <new_position>; Reason for reordering very briefly"
 
 3. **DJ NOTES**:
 Explain your mixing strategy max 50 words, including:
