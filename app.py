@@ -929,14 +929,25 @@ INSTRUCTIONS:
 1. Use Camelot Wheel theory for harmonic mixing (compatible keys are +1, -1, or same number with opposite letter)
 2. Consider BPM transitions (gradual changes work best, avoid sudden jumps >10 BPM unless intentional)
 3. Build energy progression (consider energy, valence, danceability values)
-4. Identify any songs that don't fit well with the others
+4. Remove any songs that don't fit well with the overall mix
 
 RESPOND WITH:
-1. **REORDERED PLAYLIST**: List the song numbers in your recommended order with brief transition notes
-2. **DJ NOTES**: Explain your mixing strategy and energy flow
-3. **PROBLEMATIC TRACKS**: Mention any songs that are difficult to mix or don't fit the overall vibe
+1. **PROBLEMATIC TRACKS**:
+List any songs that should be removed from the mix due to incompatible keys, extreme BPM differences, or energy mismatches.
+Format: "Remove: <song_number>. <song_name> - Reason for removal"
 
-Format your response clearly with these three sections."""
+2. **REORDERED PLAYLIST**:
+List ONLY the remaining songs (excluding problematic ones) in your recommended order.
+Format each line as: "<song_name> : from <old_position> to <new_position> Reason for reordering very briefly"
+
+3. **DJ NOTES**:
+Explain your mixing strategy max 50 words, including:
+- Overall energy flow
+- Key transition highlights
+- BPM progression
+- Any special transition techniques
+
+Keep your response structured exactly as above with these three sections."""
 
     # Call OpenAI
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
